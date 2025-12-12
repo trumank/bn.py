@@ -364,3 +364,109 @@ Type 'NonExistent' not found
 ```
 [('0x401936', 'main')]
 ```
+
+## hlil 0x999999
+
+```
+Function not found
+```
+
+## mlil 0x999999
+
+```
+Function not found
+```
+
+## vars -s 0x404000 -e 0x404200 -n 15
+
+```
+0x404000  void (* const)(void* mem)       free
+0x404008  char* (* const)(char*, char co  strncpy
+0x404010  int32_t (* const)(char const*   puts
+0x404018  int32_t (* const)(char const*   printf
+0x404020  void* (* const)(uint64_t bytes  malloc
+0x404048  void*                           __dso_handle
+0x404060  uint32_t                        g_flags
+0x404080  char[0xb]                       g_main_entity
+0x404080  char[0xb]                       g_main_entity
+0x4040c0  char[0x4]                       g_file_header
+0x4040e0  char const (*)[0xd]             g_application_name
+0x4040e8  char const (*)[0xb]             g_version_string
+0x4040f0  char const (*)[0x16]            g_author
+0x404100  char const (*)[0x15]            g_string_table
+0x404160  void*                           g_plugin
+```
+
+## callers 0x999999
+
+```
+
+```
+
+## callees 0x999999
+
+```
+
+```
+
+## sig 0x999999
+
+```
+Function not found
+```
+
+## deref 0x999999
+
+```
+
+```
+
+## read 0x999999 -n 16
+
+```
+00999999
+```
+
+## funcs -p nonexistent
+
+```
+
+```
+
+## strings -p nonexistent
+
+```
+
+```
+
+## disasm 0x401250 -n 10
+
+```
+
+00401235    int compute_fibonacci(int n) __pure
+
+00401235  55                 push    rbp {__saved_rbp}
+00401236  4889e5             mov     rbp, rsp {__saved_rbp}
+00401239  897dec             mov     dword [rbp-0x14 {var_1c}], edi
+0040123c  837dec00           cmp     dword [rbp-0x14 {var_1c}], 0x0
+00401240  7f07               jg      0x401249
+
+00401242  b800000000         mov     eax, 0x0
+```
+
+## xrefs 0x402008
+
+```
+0x4040e0  data
+```
+
+## struct FileHeader
+
+```
+struct FileHeader (32 bytes):
+  0x0     uint8_t[0x4]          magic
+  0x4     uint32_t              version
+  0x8     uint32_t              entry_count
+  0x10    uint64_t              data_offset
+  0x18    Entity*               entities
+```
