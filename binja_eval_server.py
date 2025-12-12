@@ -35,6 +35,30 @@ def _log_error(msg):
         log_error(msg)
 
 
+def _eval_code(code, globals_dict):
+    """Evaluate code like a REPL - return last expression's value."""
+    import ast
+
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        raise
+
+    if not tree.body:
+        return None
+
+    # If last statement is an expression, eval it separately
+    if isinstance(tree.body[-1], ast.Expr):
+        last_expr = tree.body.pop()
+        if tree.body:
+            exec(compile(tree, "<eval>", "exec"), globals_dict)
+        return eval(compile(ast.Expression(last_expr.value), "<eval>", "eval"), globals_dict)
+    else:
+        # No trailing expression - exec all and return 'result' if set
+        exec(compile(tree, "<eval>", "exec"), globals_dict)
+        return globals_dict.get("result")
+
+
 class EvalHandler(BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         _log(f"[EvalServer] {args[0]}")
@@ -57,15 +81,8 @@ class EvalHandler(BaseHTTPRequestHandler):
         exec_globals = {"bv": _bv, "binaryninja": binaryninja}
 
         try:
-            result = eval(code, exec_globals)
+            result = _eval_code(code, exec_globals)
             response = {"success": True, "result": repr(result)}
-        except SyntaxError:
-            try:
-                exec(code, exec_globals)
-                result = exec_globals.get("result", None)
-                response = {"success": True, "result": repr(result)}
-            except Exception as e:
-                response = {"success": False, "error": str(e)}
         except Exception as e:
             response = {"success": False, "error": str(e)}
 
