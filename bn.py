@@ -12,26 +12,26 @@ def run_code(code: str) -> dict:
     resp = requests.post(API_URL, json={"code": code}, timeout=30)
     return resp.json()
 
-def cmd_disasm(args):
-    """Get disassembly of a function."""
+def unquote(s: str) -> str:
+    """Remove surrounding quotes from repr'd string."""
+    if s and (s.startswith("'") or s.startswith('"')):
+        return eval(s)
+    return s
+
+def cmd_il(args, view_method):
+    """Get IL view of a function."""
     code = f"""
 from binaryninja import LinearViewObject, DisassemblySettings, DisassemblyOption
-from binaryninja import LinearViewObject
-addr = {args.address}
-f = bv.get_function_at(addr)
-if not f:
-    containing = bv.get_functions_containing(addr)
-    f = containing[0] if containing else None
+f = bv.get_function_at({args.address}) or next(iter(bv.get_functions_containing({args.address})), None)
 if f:
-    lines = []
     settings = DisassemblySettings.default_linear_settings()
     settings.set_option(DisassemblyOption.WaitForIL, True)
-    lvo = LinearViewObject.single_function_disassembly(f, settings)
+    lvo = LinearViewObject.{view_method}(f, settings)
     cursor = lvo.cursor
     cursor.seek_to_begin()
+    lines = []
     while not cursor.after_end:
-        for line in cursor.lines:
-            lines.append(str(line.contents))
+        lines.extend(str(line.contents) for line in cursor.lines)
         cursor.next()
     result = chr(10).join(lines[:{args.lines}])
 else:
@@ -40,47 +40,17 @@ result
 """
     result = run_code(code)
     if result.get("success"):
-        # Result is a repr'd string, eval to get actual string
-        out = result["result"]
-        if out.startswith("'") or out.startswith('"'):
-            out = eval(out)
-        print(out)
+        print(unquote(result["result"]))
     else:
         print(f"Error: {result}", file=sys.stderr)
 
+def cmd_disasm(args):
+    """Get disassembly of a function."""
+    cmd_il(args, "single_function_disassembly")
+
 def cmd_hlil(args):
     """Get HLIL of a function."""
-    code = f"""
-from binaryninja import LinearViewObject, DisassemblySettings, DisassemblyOption
-addr = {args.address}
-f = bv.get_function_at(addr)
-if not f:
-    containing = bv.get_functions_containing(addr)
-    f = containing[0] if containing else None
-if f:
-    lines = []
-    settings = DisassemblySettings.default_linear_settings()
-    settings.set_option(DisassemblyOption.WaitForIL, True)
-    lvo = LinearViewObject.single_function_hlil(f, settings)
-    cursor = lvo.cursor
-    cursor.seek_to_begin()
-    while not cursor.after_end:
-        for line in cursor.lines:
-            lines.append(str(line.contents))
-        cursor.next()
-    result = chr(10).join(lines[:{args.lines}])
-else:
-    result = "Function not found"
-result
-"""
-    result = run_code(code)
-    if result.get("success"):
-        out = result["result"]
-        if out.startswith("'") or out.startswith('"'):
-            out = eval(out)
-        print(out)
-    else:
-        print(f"Error: {result}", file=sys.stderr)
+    cmd_il(args, "single_function_hlil")
 
 def cmd_funcs(args):
     """List functions in address range or by name pattern."""
@@ -124,8 +94,7 @@ for x in refs:
         funcs = bv.get_functions_containing(x)
         name = funcs[0].name if funcs else "data"
     func_counts[name] = func_counts.get(name, 0) + 1
-result = sorted([(k,v) for k,v in func_counts.items()], key=lambda x: -x[1])[:{args.limit}]
-result
+sorted(func_counts.items(), key=lambda x: -x[1])[:{args.limit}]
 '''
         result = run_code(code)
         if result.get("success") and result["result"]:
@@ -149,8 +118,7 @@ for x in bv.get_data_refs({args.address}):
     funcs = bv.get_functions_containing(x)
     name = funcs[0].name if funcs else "data"
     results.append((hex(x), name))
-result = results[:{args.limit}]
-result
+results[:{args.limit}]
 '''
         result = run_code(code)
         if result.get("success") and result["result"]:
@@ -166,21 +134,14 @@ result
 def cmd_callees(args):
     """Get functions called by a function."""
     code = f"""
-from binaryninja import LinearViewObject
-addr = {args.address}
-f = bv.get_function_at(addr)
-if not f:
-    containing = bv.get_functions_containing(addr)
-    f = containing[0] if containing else None
+import re
+f = bv.get_function_at({args.address}) or next(iter(bv.get_functions_containing({args.address})), None)
 if f:
-    # Find JSR/BSR instructions
     calls = set()
     for block in f.basic_blocks:
         for insn in block.get_disassembly_text():
             s = str(insn)
             if 'jsr' in s.lower() or 'bsr' in s.lower():
-                # Extract target address
-                import re
                 m = re.search(r'@(0x[0-9a-fA-F]+)', s)
                 if m:
                     target = int(m.group(1), 16)
@@ -252,17 +213,14 @@ def show_struct(name):
     """Helper to display a struct by name."""
     code = f'''
 t = bv.get_type_by_name("{name}")
-if t:
-    # Handle NamedTypeReference by resolving it
-    if hasattr(t, 'target'):
-        t = bv.get_type_by_name(str(t.target))
-    if t and hasattr(t, 'members') and t.members:
-        members = [(m.name, hex(m.offset), str(m.type)) for m in t.members]
-        result = ("{name}", t.width, members)
-    else:
-        result = ("{name}", t.width if t else 0, [])
-else:
+if hasattr(t, 'target'):
+    t = bv.get_type_by_name(str(t.target))
+if not t:
     result = None
+elif hasattr(t, 'members') and t.members:
+    result = ("{name}", t.width, [(m.name, hex(m.offset), str(m.type)) for m in t.members])
+else:
+    result = ("{name}", t.width, [])
 result
 '''
     result = run_code(code)
@@ -322,11 +280,7 @@ def cmd_vars(args):
         # Show var at address
         code = f'''
 var = bv.get_data_var_at({args.address})
-if var:
-    result = (hex(var.address), str(var.type), var.name if hasattr(var, "name") else "")
-else:
-    result = None
-result
+(hex(var.address), str(var.type), var.name if hasattr(var, "name") else "") if var else None
 '''
         result = run_code(code)
         if result.get("success") and result["result"] and result["result"] != "None":
@@ -361,15 +315,7 @@ def cmd_callers(args):
     """Get functions that call a function."""
     code = f'''
 f = bv.get_function_at({args.address})
-if f:
-    callers = set()
-    for ref in bv.get_code_refs(f.start):
-        if ref.function:
-            callers.add((hex(ref.function.start), ref.function.name))
-    result = sorted(callers)
-else:
-    result = []
-result
+sorted({{(hex(ref.function.start), ref.function.name) for ref in bv.get_code_refs(f.start) if ref.function}}) if f else []
 '''
     result = run_code(code)
     if result.get("success"):
@@ -400,9 +346,7 @@ result
 '''
         result = run_code(code)
         if result.get("success"):
-            out = result["result"]
-            if out.startswith("'") or out.startswith('"'):
-                out = eval(out)
+            out = unquote(result["result"])
             if out == "ok":
                 print(f"Set signature at {hex(args.address)}")
             else:
@@ -413,19 +357,11 @@ result
         # Show current signature
         code = f'''
 f = bv.get_function_at({args.address})
-if f:
-    params = ", ".join([f"{{str(p.type)}} {{p.name}}" for p in f.parameter_vars])
-    result = f"{{f.return_type}} {{f.name}}({{params}})"
-else:
-    result = "Function not found"
-result
+f"{{f.return_type}} {{f.name}}({{', '.join(f'{{str(p.type)}} {{p.name}}' for p in f.parameter_vars)}})" if f else "Function not found"
 '''
         result = run_code(code)
         if result.get("success"):
-            out = result["result"]
-            if out.startswith("'") or out.startswith('"'):
-                out = eval(out)
-            print(out)
+            print(unquote(result["result"]))
         else:
             print(f"Error: {result}", file=sys.stderr)
 
@@ -433,36 +369,24 @@ def cmd_type(args):
     """Set type on a symbol (function or data variable)."""
     type_escaped = args.type_str.replace('\\', '\\\\').replace('"', '\\"')
     code = f'''
-addr = {args.address}
-type_str = "{type_escaped}"
-
-# Try to parse the type
 try:
-    t, name = bv.parse_type_string(type_str)
-    parse_error = None
-except Exception as e:
-    parse_error = str(e)
-    t = None
-
-if t is not None:
-    # Check if it's a function
-    f = bv.get_function_at(addr)
+    t, _ = bv.parse_type_string("{type_escaped}")
+    f = bv.get_function_at({args.address})
     if f:
         f.set_user_type(t)
-        result = ("ok", "function", hex(addr))
+        result = ("ok", "function")
     else:
-        # Try as data variable
-        bv.define_user_data_var(addr, t)
-        result = ("ok", "data", hex(addr))
-else:
-    result = ("error", parse_error)
+        bv.define_user_data_var({args.address}, t)
+        result = ("ok", "data")
+except Exception as e:
+    result = ("error", str(e))
 result
 '''
     result = run_code(code)
     if result.get("success"):
         out = eval(result["result"])
         if out[0] == "ok":
-            print(f"Set {out[1]} type at {out[2]}")
+            print(f"Set {out[1]} type at {hex(args.address)}")
         else:
             print(f"Parse error: {out[1]}", file=sys.stderr)
     else:
@@ -470,54 +394,20 @@ result
 
 def cmd_mlil(args):
     """Get MLIL of a function."""
-    code = f"""
-from binaryninja import LinearViewObject, DisassemblySettings, DisassemblyOption
-addr = {args.address}
-f = bv.get_function_at(addr)
-if not f:
-    containing = bv.get_functions_containing(addr)
-    f = containing[0] if containing else None
-if f:
-    lines = []
-    settings = DisassemblySettings.default_linear_settings()
-    settings.set_option(DisassemblyOption.WaitForIL, True)
-    lvo = LinearViewObject.single_function_mlil(f, settings)
-    cursor = lvo.cursor
-    cursor.seek_to_begin()
-    while not cursor.after_end:
-        for line in cursor.lines:
-            lines.append(str(line.contents))
-        cursor.next()
-    result = chr(10).join(lines[:{args.lines}])
-else:
-    result = "Function not found"
-result
-"""
-    result = run_code(code)
-    if result.get("success"):
-        out = result["result"]
-        if out.startswith("'") or out.startswith('"'):
-            out = eval(out)
-        print(out)
-    else:
-        print(f"Error: {result}", file=sys.stderr)
+    cmd_il(args, "single_function_mlil")
 
 def cmd_deref(args):
     """Dereference pointer chain at address."""
     code = f'''
-addr = {args.address}
 results = []
 for i in range({args.depth}):
-    val = bv.read({args.address} + i*8, 8)
+    addr = {args.address} + i*8
+    val = bv.read(addr, 8)
     if len(val) == 8:
         ptr = int.from_bytes(val, "little")
-        # Try to read string at pointer
         s = bv.get_ascii_string_at(ptr)
-        sval = s.value[:50] if s else ""
-        # Check if it's a function
         f = bv.get_function_at(ptr)
-        fname = f.name if f else ""
-        results.append((hex({args.address} + i*8), hex(ptr), fname, sval))
+        results.append((hex(addr), hex(ptr), f.name if f else "", s.value[:50] if s else ""))
 results
 '''
     result = run_code(code)
@@ -552,20 +442,14 @@ def cmd_patch(args):
     byte_list = list(patch_data)
 
     code = f'''
-addr = {args.address}
-patch_bytes = bytes({byte_list})
-original = bv.read(addr, len(patch_bytes))
-bv.write(addr, patch_bytes)
-result = ("ok", original.hex(), patch_bytes.hex())
-result
+original = bv.read({args.address}, {len(byte_list)})
+bv.write({args.address}, bytes({byte_list}))
+original.hex()
 '''
     result = run_code(code)
     if result.get("success"):
-        out = eval(result["result"])
-        if out[0] == "ok":
-            print(f"Patched {hex(args.address)}: {out[1]} -> {out[2]}")
-        else:
-            print(f"Error: {out}", file=sys.stderr)
+        original = unquote(result["result"])
+        print(f"Patched {hex(args.address)}: {original} -> {hex_bytes}")
     else:
         print(f"Error: {result}", file=sys.stderr)
 
