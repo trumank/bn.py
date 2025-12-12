@@ -20,9 +20,10 @@ def unquote(s: str) -> str:
 
 def cmd_il(args, view_method):
     """Get IL view of a function."""
+    addr = resolve_addr(args.address)
     code = f"""
 from binaryninja import LinearViewObject, DisassemblySettings, DisassemblyOption
-f = bv.get_function_at({args.address}) or next(iter(bv.get_functions_containing({args.address})), None)
+f = bv.get_function_at({addr}) or next(iter(bv.get_functions_containing({addr})), None)
 if f:
     settings = DisassemblySettings.default_linear_settings()
     settings.set_option(DisassemblyOption.WaitForIL, True)
@@ -73,19 +74,21 @@ def cmd_funcs(args):
 
 def cmd_rename(args):
     """Rename a function."""
-    code = f'bv.get_function_at({args.address}).name = "{args.name}"; "ok"'
+    addr = resolve_addr(args.address)
+    code = f'bv.get_function_at({addr}).name = "{args.name}"; "ok"'
     result = run_code(code)
     if result.get("success"):
-        print(f"Renamed {hex(args.address)} to {args.name}")
+        print(f"Renamed {hex(addr)} to {args.name}")
     else:
         print(f"Error: {result}", file=sys.stderr)
 
 def cmd_xrefs(args):
     """Get cross-references to an address."""
+    addr = resolve_addr(args.address)
     if args.count:
         # Count refs grouped by function
         code = f'''
-refs = list(bv.get_code_refs({args.address})) + list(bv.get_data_refs({args.address}))
+refs = list(bv.get_code_refs({addr})) + list(bv.get_data_refs({addr}))
 func_counts = {{}}
 for x in refs:
     if hasattr(x, "function"):
@@ -112,9 +115,9 @@ sorted(func_counts.items(), key=lambda x: -x[1])[:{args.limit}]
     else:
         code = f'''
 results = []
-for x in bv.get_code_refs({args.address}):
+for x in bv.get_code_refs({addr}):
     results.append((hex(x.address), x.function.name if x.function else "data"))
-for x in bv.get_data_refs({args.address}):
+for x in bv.get_data_refs({addr}):
     funcs = bv.get_functions_containing(x)
     name = funcs[0].name if funcs else "data"
     results.append((hex(x), name))
@@ -133,9 +136,10 @@ results[:{args.limit}]
 
 def cmd_callees(args):
     """Get functions called by a function."""
+    addr = resolve_addr(args.address)
     code = f"""
 import re
-f = bv.get_function_at({args.address}) or next(iter(bv.get_functions_containing({args.address})), None)
+f = bv.get_function_at({addr}) or next(iter(bv.get_functions_containing({addr})), None)
 if f:
     calls = set()
     for block in f.basic_blocks:
@@ -177,24 +181,48 @@ def cmd_strings(args):
         print(f"Error: {result}", file=sys.stderr)
 
 def cmd_read(args):
-    """Read bytes at address in hexdump -C format."""
-    code = f'bv.read({args.address}, {args.length}).hex()'
+    """Read data at address using linear view."""
+    addr = resolve_addr(args.address)
+    code = f"""
+from binaryninja import LinearViewObject, DisassemblySettings, DisassemblyOption
+settings = DisassemblySettings.default_linear_settings()
+settings.set_option(DisassemblyOption.WaitForIL, True)
+lvo = LinearViewObject.disassembly(bv, settings)
+cursor = lvo.cursor
+cursor.seek_to_address({addr})
+lines = []
+count = 0
+while not cursor.after_end and count < {args.lines}:
+    for line in cursor.lines:
+        if line.contents.address >= {addr} + {args.length}:
+            break
+        lines.append(str(line.contents))
+        count += 1
+    if count >= {args.lines}:
+        break
+    cursor.next()
+chr(10).join(lines)
+"""
+    result = run_code(code)
+    if result.get("success"):
+        print(unquote(result["result"]))
+    else:
+        print(f"Error: {result}", file=sys.stderr)
+
+def cmd_hexdump(args):
+    """Read raw bytes at address in hexdump -C format."""
+    addr = resolve_addr(args.address)
+    code = f'bv.read({addr}, {args.length}).hex()'
     result = run_code(code)
     if result.get("success"):
         hex_str = result["result"].strip("'\"")
         data = bytes.fromhex(hex_str)
-        addr = args.address
         for i in range(0, len(data), 16):
             chunk = data[i:i+16]
-            # Hex part
             hex_part = ' '.join(f'{b:02x}' for b in chunk[:8])
             if len(chunk) > 8:
                 hex_part += '  ' + ' '.join(f'{b:02x}' for b in chunk[8:])
-            else:
-                hex_part += '  '
-            # Pad hex part to fixed width
             hex_part = hex_part.ljust(49)
-            # ASCII part
             ascii_part = ''.join(chr(b) if 0x20 <= b < 0x7f else '.' for b in chunk)
             print(f'{addr + i:08x}  {hex_part} |{ascii_part}|')
         print(f'{addr + len(data):08x}')
@@ -278,8 +306,9 @@ def cmd_vars(args):
     """List or define data variables."""
     if args.address:
         # Show var at address
+        addr = resolve_addr(args.address)
         code = f'''
-var = bv.get_data_var_at({args.address})
+var = bv.get_data_var_at({addr})
 (hex(var.address), str(var.type), var.name if hasattr(var, "name") else "") if var else None
 '''
         result = run_code(code)
@@ -313,8 +342,9 @@ vars[:{args.limit}]
 
 def cmd_callers(args):
     """Get functions that call a function."""
+    addr = resolve_addr(args.address)
     code = f'''
-f = bv.get_function_at({args.address})
+f = bv.get_function_at({addr})
 sorted({{(hex(ref.function.start), ref.function.name) for ref in bv.get_code_refs(f.start) if ref.function}}) if f else []
 '''
     result = run_code(code)
@@ -327,12 +357,13 @@ sorted({{(hex(ref.function.start), ref.function.name) for ref in bv.get_code_ref
 
 def cmd_sig(args):
     """Show or set function signature."""
+    addr = resolve_addr(args.address)
     if args.signature:
         # Set signature using bv.parse_type_string
         # Escape the signature for embedding in Python code
         sig_escaped = args.signature.replace('\\', '\\\\').replace('"', '\\"')
         code = f'''
-f = bv.get_function_at({args.address})
+f = bv.get_function_at({addr})
 if f:
     try:
         t, name = bv.parse_type_string("{sig_escaped}")
@@ -348,7 +379,7 @@ result
         if result.get("success"):
             out = unquote(result["result"])
             if out == "ok":
-                print(f"Set signature at {hex(args.address)}")
+                print(f"Set signature at {hex(addr)}")
             else:
                 print(out, file=sys.stderr)
         else:
@@ -356,7 +387,7 @@ result
     else:
         # Show current signature
         code = f'''
-f = bv.get_function_at({args.address})
+f = bv.get_function_at({addr})
 f"{{f.return_type}} {{f.name}}({{', '.join(f'{{str(p.type)}} {{p.name}}' for p in f.parameter_vars)}})" if f else "Function not found"
 '''
         result = run_code(code)
@@ -367,16 +398,17 @@ f"{{f.return_type}} {{f.name}}({{', '.join(f'{{str(p.type)}} {{p.name}}' for p i
 
 def cmd_type(args):
     """Set type on a symbol (function or data variable)."""
+    addr = resolve_addr(args.address)
     type_escaped = args.type_str.replace('\\', '\\\\').replace('"', '\\"')
     code = f'''
 try:
     t, _ = bv.parse_type_string("{type_escaped}")
-    f = bv.get_function_at({args.address})
+    f = bv.get_function_at({addr})
     if f:
         f.set_user_type(t)
         result = ("ok", "function")
     else:
-        bv.define_user_data_var({args.address}, t)
+        bv.define_user_data_var({addr}, t)
         result = ("ok", "data")
 except Exception as e:
     result = ("error", str(e))
@@ -386,7 +418,7 @@ result
     if result.get("success"):
         out = eval(result["result"])
         if out[0] == "ok":
-            print(f"Set {out[1]} type at {hex(args.address)}")
+            print(f"Set {out[1]} type at {hex(addr)}")
         else:
             print(f"Parse error: {out[1]}", file=sys.stderr)
     else:
@@ -398,16 +430,17 @@ def cmd_mlil(args):
 
 def cmd_deref(args):
     """Dereference pointer chain at address."""
+    addr = resolve_addr(args.address)
     code = f'''
 results = []
 for i in range({args.depth}):
-    addr = {args.address} + i*8
-    val = bv.read(addr, 8)
+    a = {addr} + i*8
+    val = bv.read(a, 8)
     if len(val) == 8:
         ptr = int.from_bytes(val, "little")
         s = bv.get_ascii_string_at(ptr)
         f = bv.get_function_at(ptr)
-        results.append((hex(addr), hex(ptr), f.name if f else "", s.value[:50] if s else ""))
+        results.append((hex(a), hex(ptr), f.name if f else "", s.value[:50] if s else ""))
 results
 '''
     result = run_code(code)
@@ -421,15 +454,17 @@ results
 
 def cmd_comment(args):
     """Set comment at address."""
-    code = f'f = bv.get_functions_containing({args.address}); f[0].set_comment_at({args.address}, """{args.text}""") if f else None; "ok"'
+    addr = resolve_addr(args.address)
+    code = f'f = bv.get_functions_containing({addr}); f[0].set_comment_at({addr}, """{args.text}""") if f else None; "ok"'
     result = run_code(code)
     if result.get("success"):
-        print(f"Comment set at {hex(args.address)}")
+        print(f"Comment set at {hex(addr)}")
     else:
         print(f"Error: {result}", file=sys.stderr)
 
 def cmd_patch(args):
     """Patch bytes at address."""
+    addr = resolve_addr(args.address)
     # Parse hex bytes
     hex_bytes = args.bytes.replace(" ", "")
     try:
@@ -442,14 +477,14 @@ def cmd_patch(args):
     byte_list = list(patch_data)
 
     code = f'''
-original = bv.read({args.address}, {len(byte_list)})
-bv.write({args.address}, bytes({byte_list}))
+original = bv.read({addr}, {len(byte_list)})
+bv.write({addr}, bytes({byte_list}))
 original.hex()
 '''
     result = run_code(code)
     if result.get("success"):
         original = unquote(result["result"])
-        print(f"Patched {hex(args.address)}: {original} -> {hex_bytes}")
+        print(f"Patched {hex(addr)}: {original} -> {hex_bytes}")
     else:
         print(f"Error: {result}", file=sys.stderr)
 
@@ -457,19 +492,37 @@ def parse_addr(s):
     """Parse address from hex or decimal string."""
     return int(s, 16) if s.startswith("0x") else int(s)
 
+def resolve_addr(name):
+    """Resolve address from hex, decimal, or symbol name."""
+    # Try parsing as number first
+    try:
+        return int(name, 16) if name.startswith("0x") else int(name)
+    except ValueError:
+        pass
+    # Look up as symbol - prefer highest address (actual data over imports)
+    code = f'''
+syms = bv.get_symbols_by_name("{name}")
+hex(max(s.address for s in syms)) if syms else None
+'''
+    result = run_code(code)
+    if result.get("success") and result["result"] and result["result"] != "None":
+        return int(result["result"].strip("'\""), 16)
+    print(f"Symbol not found: {name}", file=sys.stderr)
+    sys.exit(1)
+
 def main():
     parser = argparse.ArgumentParser(description="Binary Ninja HTTP API helper")
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # disasm
     p = subparsers.add_parser("disasm", aliases=["d"], help="Disassemble function")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.add_argument("-n", "--lines", type=int, default=100, help="Max lines")
     p.set_defaults(func=cmd_disasm)
 
     # hlil
     p = subparsers.add_parser("hlil", aliases=["h"], help="Get HLIL of function")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.add_argument("-n", "--lines", type=int, default=100, help="Max lines")
     p.set_defaults(func=cmd_hlil)
 
@@ -484,20 +537,20 @@ def main():
 
     # rename
     p = subparsers.add_parser("rename", aliases=["r"], help="Rename function")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.add_argument("name", help="New name")
     p.set_defaults(func=cmd_rename)
 
     # xrefs
     p = subparsers.add_parser("xrefs", aliases=["x"], help="Get xrefs to address")
-    p.add_argument("address", type=parse_addr, help="Target address")
+    p.add_argument("address", help="Target address or symbol")
     p.add_argument("-c", "--count", action="store_true", help="Group by function and count")
     p.add_argument("-n", "--limit", type=int, default=50, help="Max results")
     p.set_defaults(func=cmd_xrefs)
 
     # callees
     p = subparsers.add_parser("callees", aliases=["c"], help="Get callees of function")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.set_defaults(func=cmd_callees)
 
     # strings
@@ -507,10 +560,17 @@ def main():
     p.set_defaults(func=cmd_strings)
 
     # read
-    p = subparsers.add_parser("read", help="Read bytes at address")
-    p.add_argument("address", type=parse_addr, help="Address")
-    p.add_argument("-n", "--length", type=int, default=32, help="Bytes to read")
+    p = subparsers.add_parser("read", help="Read data at address (linear view)")
+    p.add_argument("address", help="Address or symbol name")
+    p.add_argument("-l", "--length", type=int, default=256, help="Byte range to display")
+    p.add_argument("-n", "--lines", type=int, default=50, help="Max lines")
     p.set_defaults(func=cmd_read)
+
+    # hexdump
+    p = subparsers.add_parser("hexdump", aliases=["hd"], help="Raw hexdump at address")
+    p.add_argument("address", help="Address or symbol")
+    p.add_argument("-n", "--length", type=int, default=64, help="Bytes to read")
+    p.set_defaults(func=cmd_hexdump)
 
     # eval
     p = subparsers.add_parser("eval", aliases=["e"], help="Run arbitrary code")
@@ -526,7 +586,7 @@ def main():
 
     # vars
     p = subparsers.add_parser("vars", aliases=["v"], help="List/show data variables")
-    p.add_argument("address", type=parse_addr, nargs="?", help="Variable address")
+    p.add_argument("address", nargs="?", help="Variable address or symbol")
     p.add_argument("-s", "--start", type=parse_addr, help="Start address for listing")
     p.add_argument("-e", "--end", type=parse_addr, help="End address for listing")
     p.add_argument("-n", "--limit", type=int, default=50, help="Max results")
@@ -534,42 +594,42 @@ def main():
 
     # callers
     p = subparsers.add_parser("callers", aliases=["cr"], help="Get callers of function")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.set_defaults(func=cmd_callers)
 
     # sig
     p = subparsers.add_parser("sig", help="Show/set function signature")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.add_argument("signature", nargs="?", help="New signature (e.g., 'int32_t foo(char* a, int b)')")
     p.set_defaults(func=cmd_sig)
 
     # type
     p = subparsers.add_parser("type", aliases=["t"], help="Set type on symbol (function or data)")
-    p.add_argument("address", type=parse_addr, help="Symbol address")
+    p.add_argument("address", help="Symbol address or name")
     p.add_argument("type_str", help="Type string (e.g., 'int32_t foo(char* a)' or 'uint8_t[16]')")
     p.set_defaults(func=cmd_type)
 
     # mlil
     p = subparsers.add_parser("mlil", aliases=["m"], help="Get MLIL of function")
-    p.add_argument("address", type=parse_addr, help="Function address")
+    p.add_argument("address", help="Function address or symbol")
     p.add_argument("-n", "--lines", type=int, default=100, help="Max lines")
     p.set_defaults(func=cmd_mlil)
 
     # deref
     p = subparsers.add_parser("deref", aliases=["dr"], help="Dereference pointer(s)")
-    p.add_argument("address", type=parse_addr, help="Start address")
+    p.add_argument("address", help="Start address or symbol")
     p.add_argument("-d", "--depth", type=int, default=8, help="Number of pointers")
     p.set_defaults(func=cmd_deref)
 
     # comment
     p = subparsers.add_parser("comment", aliases=["cmt"], help="Set comment at address")
-    p.add_argument("address", type=parse_addr, help="Address")
+    p.add_argument("address", help="Address or symbol")
     p.add_argument("text", help="Comment text")
     p.set_defaults(func=cmd_comment)
 
     # patch
     p = subparsers.add_parser("patch", aliases=["p"], help="Patch bytes at address")
-    p.add_argument("address", type=parse_addr, help="Address to patch")
+    p.add_argument("address", help="Address or symbol to patch")
     p.add_argument("bytes", help="Hex bytes to write (e.g., 'EB30' or '90 90 90')")
     p.set_defaults(func=cmd_patch)
 

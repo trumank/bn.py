@@ -247,21 +247,77 @@ No references found
 ## read 0x402008 -n 64
 
 ```
-00402008  42 4e 54 65 73 74 42 69  6e 61 72 79 00 31 2e 30  |BNTestBinary.1.0|
-00402018  2e 30 2d 74 65 73 74 00  43 6c 61 75 64 65 20 54  |.0-test.Claude T|
-00402028  65 73 74 20 47 65 6e 65  72 61 74 6f 72 00 45 72  |est Generator.Er|
-00402038  72 6f 72 3a 20 69 6e 76  61 6c 69 64 20 69 6e 70  |ror: invalid inp|
-00402048
+
+00402008  char const data_402008[0xd] = "BNTestBinary", 0
+00402015  char const data_402015[0xb] = "1.0.0-test", 0
+00402020  char const data_402020[0x16] = "Claude Test Generator", 0
+00402036  char const data_402036[0x15] = "Error: invalid input", 0
+0040204b  char const data_40204b[0x1a] = "Warning: operation failed", 0
+00402065  char const data_402065[0x1d] = "Success: operation completed", 0
+00402082  char const data_402082[0x19] = "Debug: entering function", 0
+
+0040209b           00 00 00 00 00     .....
+
+004020a0  char const data_4020a0[0x23] = "Critical: memory allocation failed", 0
+
+004020c3           00 00 00 00 00     .....
+
+004020c8  char const data_4020c8[0x1f] = "Info: processing item %d of %d", 0
+004020e7  char const data_4020e7[0x1a] = "/etc/config/settings.conf", 0
+
+00402101     00 00 00 00 00 00 00   .......
 ```
 
 ## read 0x404080 -n 64
 
 ```
-00404080  4d 61 69 6e 45 6e 74 69  74 79 00 00 00 00 00 00  |MainEntity......|
-00404090  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-004040a0  2a 00 00 00 34 12 00 00  0a 00 00 00 14 00 00 00  |*...4...........|
-004040b0  1e 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
-004040c0
+
+00404080  char g_main_entity[0xb] = "MainEntity", 0
+
+0040408b           00 00 00 00 00     .....
+00404090  00 00 00 00 00 00 00 00  ........
+00404098  00 00 00 00 00 00 00 00  ........
+004040a0  2a 00 00 00 34 12 00 00  *...4...
+004040a8  0a 00 00 00 14 00 00 00  ........
+004040b0  1e 00 00 00 00 00 00 00  ........
+004040b8  00 00 00 00 00 00 00 00  ........
+
+004040c0  char g_file_header[0x4] = "TEST"
+
+004040c4              01 00 00 00      ....
+
+004040c8  int32_t data_4040c8 = 0x0
+
+004040cc              00 00 00 00      ....
+
+004040d0  int64_t data_4040d0 = 0x1000
+
+004040d8  00 00 00 00 00 00 00 00  ........
+
+004040e0  char const (* g_application_name)[0xd] = data_402008 {"BNTestBinary"}
+004040e8  char const (* g_version_string)[0xb] = data_402015 {"1.0.0-test"}
+004040f0  char const (* g_author)[0x16] = data_402020 {"Claude Test Generator"}
+
+004040f8  00 00 00 00 00 00 00 00  ........
+
+00404100  char const (* g_string_table)[0x15] = data_402036 {"Error: invalid input"}
+00404108  char const (* data_404108)[0x1a] = data_40204b {"Warning: operation failed"}
+00404110  char const (* data_404110)[0x1d] = data_402065 {"Success: operation completed"}
+00404118  char const (* data_404118)[0x19] = data_402082 {"Debug: entering function"}
+00404120  char const (* data_404120)[0x23] = data_4020a0 {"Critical: memory allocation failed"}
+00404128  char const (* data_404128)[0x1f] = data_4020c8 {"Info: processing item %d of %d"}
+00404130  char const (* data_404130)[0x1a] = data_4020e7 {"/etc/config/settings.conf"}
+00404138  char const (* data_404138)[0x21] = data_402108 {"SELECT * FROM users WHERE id = ?"}
+00404140  char const (* data_404140)[0x19] = data_402129 {"Authorization: Bearer %s"}
+00404148  char const (* data_404148)[0x20] = data_402148 {"https://api.example.com/v1/data"}
+
+00404150  00 00 00 00 00 00 00 00  ........
+00404158  00 00 00 00 00 00 00 00  ........
+
+00404160  void* g_plugin = plugin_init
+00404168  void* data_404168 = plugin_process
+00404170  void* data_404170 = plugin_cleanup
+00404178  char const (* data_404178)[0xb] = data_402168 {"TestPlugin"}
 ```
 
 ## sig 0x401235
@@ -421,10 +477,30 @@ Function not found
 
 ```
 
-## read 0x999999 -n 16
+## read 0x999999
 
 ```
-00999999
+.synthetic_builtins section ended  {0x404250-0x404280}
+```
+
+## hexdump 0x402008 -n 64
+
+```
+00402008  42 4e 54 65 73 74 42 69  6e 61 72 79 00 31 2e 30  |BNTestBinary.1.0|
+00402018  2e 30 2d 74 65 73 74 00  43 6c 61 75 64 65 20 54  |.0-test.Claude T|
+00402028  65 73 74 20 47 65 6e 65  72 61 74 6f 72 00 45 72  |est Generator.Er|
+00402038  72 6f 72 3a 20 69 6e 76  61 6c 69 64 20 69 6e 70  |ror: invalid inp|
+00402048
+```
+
+## hexdump 0x404080 -n 64
+
+```
+00404080  4d 61 69 6e 45 6e 74 69  74 79 00 00 00 00 00 00  |MainEntity......|
+00404090  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+004040a0  2a 00 00 00 34 12 00 00  0a 00 00 00 14 00 00 00  |*...4...........|
+004040b0  1e 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+004040c0
 ```
 
 ## funcs -p nonexistent
@@ -469,4 +545,84 @@ struct FileHeader (32 bytes):
   0x8     uint32_t              entry_count
   0x10    uint64_t              data_offset
   0x18    Entity*               entities
+```
+
+## hlil compute_fibonacci -n 10
+
+```
+
+00401235    int compute_fibonacci(int n) __pure
+
+00401240     if (n s<= 0)
+00401242        return 0
+00401242     
+0040124d     if (n == 1)
+0040124f        return 1
+0040124f     
+00401256     int a = 0
+```
+
+## disasm main -n 5
+
+```
+
+00401936    int32_t main(int argc, char** argv)
+
+00401936  55                 push    rbp {__saved_rbp}
+00401937  4889e5             mov     rbp, rsp {__saved_rbp}
+```
+
+## callers compute_fibonacci
+
+```
+0x4012c2  process_command
+0x4013f9  plugin_process
+0x401936  main
+```
+
+## xrefs compute_fibonacci
+
+```
+0x401378  process_command
+0x40144a  plugin_process
+0x4019da  main
+```
+
+## sig main
+
+```
+int32_t main(int argc, char** argv)
+```
+
+## deref g_plugin -d 4
+
+```
+0x404160: 0x4013ca  plugin_init
+0x404168: 0x4013f9  plugin_process
+0x404170: 0x40145f  plugin_cleanup
+0x404178: 0x402168  'TestPlugin'
+```
+
+## read g_plugin -n 5
+
+```
+
+00404160  void* g_plugin = plugin_init
+00404168  void* data_404168 = plugin_process
+00404170  void* data_404170 = plugin_cleanup
+00404178  char const (* data_404178)[0xb] = data_402168 {"TestPlugin"}
+```
+
+## hexdump g_main_entity -n 32
+
+```
+00404080  4d 61 69 6e 45 6e 74 69  74 79 00 00 00 00 00 00  |MainEntity......|
+00404090  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+004040a0
+```
+
+## vars g_plugin
+
+```
+0x404160  void*  g_plugin
 ```
