@@ -56,7 +56,7 @@ def cmd_hlil(args):
 def cmd_funcs(args):
     """List functions in address range or by name pattern."""
     if args.pattern:
-        code = f'[(hex(f.start), f.name) for f in bv.functions if "{args.pattern}" in f.name.lower()][:{args.limit}]'
+        code = f'[(hex(f.start), f.name) for f in bv.functions if __import__("re").search({repr(args.pattern)}, f.name, __import__("re").IGNORECASE)][:{args.limit}]'
     elif args.start and args.end:
         code = f'[(hex(f.start), f.name) for f in bv.functions if {args.start} <= f.start <= {args.end}][:{args.limit}]'
     elif args.named:
@@ -499,10 +499,15 @@ def resolve_addr(name):
         return int(name, 16) if name.startswith("0x") else int(name)
     except ValueError:
         pass
-    # Look up as symbol - prefer highest address (actual data over imports)
+    # Look up as symbol or function name
     code = f'''
 syms = bv.get_symbols_by_name("{name}")
-hex(max(s.address for s in syms)) if syms else None
+if syms:
+    result = hex(max(s.address for s in syms))
+else:
+    funcs = bv.get_functions_by_name("{name}")
+    result = hex(funcs[0].start) if funcs else None
+result
 '''
     result = run_code(code)
     if result.get("success") and result["result"] and result["result"] != "None":
@@ -510,128 +515,115 @@ hex(max(s.address for s in syms)) if syms else None
     print(f"Symbol not found: {name}", file=sys.stderr)
     sys.exit(1)
 
+COMMANDS = [
+    # (name, alias, usage, help, func, [(arg_flags, arg_opts), ...])
+    ("disasm", "d", "<addr>", "Disassemble function", cmd_disasm, [
+        (["address"], {"help": "Function address or symbol"}),
+        (["-n", "--lines"], {"type": int, "default": 100, "help": "Max lines"}),
+    ]),
+    ("hlil", "h", "<addr>", "High-level IL", cmd_hlil, [
+        (["address"], {"help": "Function address or symbol"}),
+        (["-n", "--lines"], {"type": int, "default": 100, "help": "Max lines"}),
+    ]),
+    ("mlil", "m", "<addr>", "Medium-level IL", cmd_mlil, [
+        (["address"], {"help": "Function address or symbol"}),
+        (["-n", "--lines"], {"type": int, "default": 100, "help": "Max lines"}),
+    ]),
+    ("funcs", "f", "[-p PAT] [--named]", "List/search functions", cmd_funcs, [
+        (["-p", "--pattern"], {"help": "Regex pattern (case-insensitive)"}),
+        (["-s", "--start"], {"type": parse_addr, "help": "Start address"}),
+        (["-e", "--end"], {"type": parse_addr, "help": "End address"}),
+        (["--named"], {"action": "store_true", "help": "Only named functions"}),
+        (["-n", "--limit"], {"type": int, "default": 50, "help": "Max results"}),
+    ]),
+    ("rename", "r", "<addr> <name>", "Rename function", cmd_rename, [
+        (["address"], {"help": "Function address or symbol"}),
+        (["name"], {"help": "New name"}),
+    ]),
+    ("xrefs", "x", "<addr> [-c]", "Cross-references to address", cmd_xrefs, [
+        (["address"], {"help": "Target address or symbol"}),
+        (["-c", "--count"], {"action": "store_true", "help": "Group and count by function"}),
+        (["-n", "--limit"], {"type": int, "default": 50, "help": "Max results"}),
+    ]),
+    ("callers", "cr", "<addr>", "Functions that call target", cmd_callers, [
+        (["address"], {"help": "Function address or symbol"}),
+    ]),
+    ("callees", "c", "<addr>", "Functions called by target", cmd_callees, [
+        (["address"], {"help": "Function address or symbol"}),
+    ]),
+    ("strings", "s", "[-p PAT]", "Search strings", cmd_strings, [
+        (["-p", "--pattern"], {"help": "Pattern to search"}),
+        (["-n", "--limit"], {"type": int, "default": 30, "help": "Max results"}),
+    ]),
+    ("read", None, "<addr>", "Linear view at address", cmd_read, [
+        (["address"], {"help": "Address or symbol"}),
+        (["-l", "--length"], {"type": int, "default": 256, "help": "Byte range"}),
+        (["-n", "--lines"], {"type": int, "default": 50, "help": "Max lines"}),
+    ]),
+    ("hexdump", "hd", "<addr>", "Raw hex dump", cmd_hexdump, [
+        (["address"], {"help": "Address or symbol"}),
+        (["-n", "--length"], {"type": int, "default": 64, "help": "Bytes to read"}),
+    ]),
+    ("struct", "st", "[name] [-l] [-d DEF]", "Show/list/define structs", cmd_struct, [
+        (["name"], {"nargs": "?", "help": "Structure name"}),
+        (["-l", "--list"], {"action": "store_true", "help": "List all types"}),
+        (["-d", "--define"], {"help": "Define struct from C syntax"}),
+    ]),
+    ("vars", "v", "[addr]", "List/show data variables", cmd_vars, [
+        (["address"], {"nargs": "?", "help": "Variable address or symbol"}),
+        (["-s", "--start"], {"type": parse_addr, "help": "Start address"}),
+        (["-e", "--end"], {"type": parse_addr, "help": "End address"}),
+        (["-n", "--limit"], {"type": int, "default": 50, "help": "Max results"}),
+    ]),
+    ("sig", None, "<addr> [SIG]", "Show/set function signature", cmd_sig, [
+        (["address"], {"help": "Function address or symbol"}),
+        (["signature"], {"nargs": "?", "help": "New signature, e.g. 'int foo(char* a)'"}),
+    ]),
+    ("type", "t", "<addr> <type>", "Set type on symbol", cmd_type, [
+        (["address"], {"help": "Symbol address or name"}),
+        (["type_str"], {"help": "Type string, e.g. 'uint8_t[16]'"}),
+    ]),
+    ("deref", "dr", "<addr>", "Dereference pointer chain", cmd_deref, [
+        (["address"], {"help": "Start address or symbol"}),
+        (["-d", "--depth"], {"type": int, "default": 8, "help": "Number of pointers"}),
+    ]),
+    ("comment", "cmt", "<addr> <text>", "Set comment", cmd_comment, [
+        (["address"], {"help": "Address or symbol"}),
+        (["text"], {"help": "Comment text"}),
+    ]),
+    ("patch", "p", "<addr> <hexbytes>", "Patch bytes", cmd_patch, [
+        (["address"], {"help": "Address or symbol"}),
+        (["bytes"], {"help": "Hex bytes, e.g. 'EB30' or '90 90 90'"}),
+    ]),
+    ("eval", "e", "<code>", "Run Python code", cmd_eval, [
+        (["code"], {"help": "Python code to execute"}),
+    ]),
+]
+
+def build_epilog():
+    lines = ["Commands (address can be hex, decimal, or symbol name):"]
+    for name, alias, usage, help_text, _, _ in COMMANDS:
+        if alias:
+            cmd = f"{alias}|{name}"
+        else:
+            cmd = name
+        lines.append(f"  {cmd:12s} {usage:24s} {help_text}")
+    return "\n".join(lines)
+
 def main():
-    parser = argparse.ArgumentParser(description="Binary Ninja HTTP API helper")
-    subparsers = parser.add_subparsers(dest="command", help="Commands")
+    parser = argparse.ArgumentParser(
+        description="Binary Ninja HTTP API helper",
+        epilog=build_epilog(),
+        formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    subparsers = parser.add_subparsers(dest="command", metavar="", help=argparse.SUPPRESS)
 
-    # disasm
-    p = subparsers.add_parser("disasm", aliases=["d"], help="Disassemble function")
-    p.add_argument("address", help="Function address or symbol")
-    p.add_argument("-n", "--lines", type=int, default=100, help="Max lines")
-    p.set_defaults(func=cmd_disasm)
-
-    # hlil
-    p = subparsers.add_parser("hlil", aliases=["h"], help="Get HLIL of function")
-    p.add_argument("address", help="Function address or symbol")
-    p.add_argument("-n", "--lines", type=int, default=100, help="Max lines")
-    p.set_defaults(func=cmd_hlil)
-
-    # funcs
-    p = subparsers.add_parser("funcs", aliases=["f"], help="List functions")
-    p.add_argument("-p", "--pattern", help="Name pattern to search")
-    p.add_argument("-s", "--start", type=parse_addr, help="Start address")
-    p.add_argument("-e", "--end", type=parse_addr, help="End address")
-    p.add_argument("--named", action="store_true", help="Only named functions")
-    p.add_argument("-n", "--limit", type=int, default=50, help="Max results")
-    p.set_defaults(func=cmd_funcs)
-
-    # rename
-    p = subparsers.add_parser("rename", aliases=["r"], help="Rename function")
-    p.add_argument("address", help="Function address or symbol")
-    p.add_argument("name", help="New name")
-    p.set_defaults(func=cmd_rename)
-
-    # xrefs
-    p = subparsers.add_parser("xrefs", aliases=["x"], help="Get xrefs to address")
-    p.add_argument("address", help="Target address or symbol")
-    p.add_argument("-c", "--count", action="store_true", help="Group by function and count")
-    p.add_argument("-n", "--limit", type=int, default=50, help="Max results")
-    p.set_defaults(func=cmd_xrefs)
-
-    # callees
-    p = subparsers.add_parser("callees", aliases=["c"], help="Get callees of function")
-    p.add_argument("address", help="Function address or symbol")
-    p.set_defaults(func=cmd_callees)
-
-    # strings
-    p = subparsers.add_parser("strings", aliases=["s"], help="Search strings")
-    p.add_argument("-p", "--pattern", help="Pattern to search")
-    p.add_argument("-n", "--limit", type=int, default=30, help="Max results")
-    p.set_defaults(func=cmd_strings)
-
-    # read
-    p = subparsers.add_parser("read", help="Read data at address (linear view)")
-    p.add_argument("address", help="Address or symbol name")
-    p.add_argument("-l", "--length", type=int, default=256, help="Byte range to display")
-    p.add_argument("-n", "--lines", type=int, default=50, help="Max lines")
-    p.set_defaults(func=cmd_read)
-
-    # hexdump
-    p = subparsers.add_parser("hexdump", aliases=["hd"], help="Raw hexdump at address")
-    p.add_argument("address", help="Address or symbol")
-    p.add_argument("-n", "--length", type=int, default=64, help="Bytes to read")
-    p.set_defaults(func=cmd_hexdump)
-
-    # eval
-    p = subparsers.add_parser("eval", aliases=["e"], help="Run arbitrary code")
-    p.add_argument("code", help="Python code to execute")
-    p.set_defaults(func=cmd_eval)
-
-    # struct
-    p = subparsers.add_parser("struct", aliases=["st"], help="Show/list structures")
-    p.add_argument("name", nargs="?", help="Structure name to show")
-    p.add_argument("-l", "--list", action="store_true", help="List all types")
-    p.add_argument("-d", "--define", help="Define struct (JSON format)")
-    p.set_defaults(func=cmd_struct)
-
-    # vars
-    p = subparsers.add_parser("vars", aliases=["v"], help="List/show data variables")
-    p.add_argument("address", nargs="?", help="Variable address or symbol")
-    p.add_argument("-s", "--start", type=parse_addr, help="Start address for listing")
-    p.add_argument("-e", "--end", type=parse_addr, help="End address for listing")
-    p.add_argument("-n", "--limit", type=int, default=50, help="Max results")
-    p.set_defaults(func=cmd_vars)
-
-    # callers
-    p = subparsers.add_parser("callers", aliases=["cr"], help="Get callers of function")
-    p.add_argument("address", help="Function address or symbol")
-    p.set_defaults(func=cmd_callers)
-
-    # sig
-    p = subparsers.add_parser("sig", help="Show/set function signature")
-    p.add_argument("address", help="Function address or symbol")
-    p.add_argument("signature", nargs="?", help="New signature (e.g., 'int32_t foo(char* a, int b)')")
-    p.set_defaults(func=cmd_sig)
-
-    # type
-    p = subparsers.add_parser("type", aliases=["t"], help="Set type on symbol (function or data)")
-    p.add_argument("address", help="Symbol address or name")
-    p.add_argument("type_str", help="Type string (e.g., 'int32_t foo(char* a)' or 'uint8_t[16]')")
-    p.set_defaults(func=cmd_type)
-
-    # mlil
-    p = subparsers.add_parser("mlil", aliases=["m"], help="Get MLIL of function")
-    p.add_argument("address", help="Function address or symbol")
-    p.add_argument("-n", "--lines", type=int, default=100, help="Max lines")
-    p.set_defaults(func=cmd_mlil)
-
-    # deref
-    p = subparsers.add_parser("deref", aliases=["dr"], help="Dereference pointer(s)")
-    p.add_argument("address", help="Start address or symbol")
-    p.add_argument("-d", "--depth", type=int, default=8, help="Number of pointers")
-    p.set_defaults(func=cmd_deref)
-
-    # comment
-    p = subparsers.add_parser("comment", aliases=["cmt"], help="Set comment at address")
-    p.add_argument("address", help="Address or symbol")
-    p.add_argument("text", help="Comment text")
-    p.set_defaults(func=cmd_comment)
-
-    # patch
-    p = subparsers.add_parser("patch", aliases=["p"], help="Patch bytes at address")
-    p.add_argument("address", help="Address or symbol to patch")
-    p.add_argument("bytes", help="Hex bytes to write (e.g., 'EB30' or '90 90 90')")
-    p.set_defaults(func=cmd_patch)
+    for name, alias, _, _, func, args in COMMANDS:
+        aliases = [alias] if alias else []
+        p = subparsers.add_parser(name, aliases=aliases)
+        for arg_flags, arg_opts in args:
+            p.add_argument(*arg_flags, **arg_opts)
+        p.set_defaults(func=func)
 
     args = parser.parse_args()
     if not args.command:
