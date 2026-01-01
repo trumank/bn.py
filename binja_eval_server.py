@@ -11,7 +11,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
 SERVER_PORT = 31337
-_servers = {}  # bv -> (server_instance, server_thread, port)
+_servers = {}  # bv_id -> (server_instance, server_thread, port, filename)
 _headless = False
 
 
@@ -127,10 +127,13 @@ def _find_free_port(start_port):
 
 
 def get_server_for_bv(bv):
-    """Get server info for a BinaryView, or None if not running."""
+    """Get server info (server, thread, port) for a BinaryView, or None if not running."""
     if bv is None:
         return None
-    return _servers.get(_get_bv_key(bv))
+    info = _servers.get(_get_bv_key(bv))
+    if info:
+        return info[:3]  # Return (server, thread, port) without filename
+    return None
 
 
 def start_server(bv, port=None):
@@ -156,7 +159,8 @@ def start_server(bv, port=None):
         server = HTTPServer(("127.0.0.1", port), make_handler(bv))
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
-        _servers[key] = (server, thread, port)
+        filename = bv.file.filename if bv.file else None
+        _servers[key] = (server, thread, port, filename)
         _log(f"[EvalServer] Started on http://127.0.0.1:{port}")
         _log("[EvalServer] POST /eval with JSON {\"code\": \"<python>\"} to evaluate")
     except Exception as e:
@@ -174,7 +178,7 @@ def stop_server(bv=None):
         _log("[EvalServer] Server not running for this view")
         return
 
-    server, thread, port = _servers.pop(key)
+    server, thread, port, _ = _servers.pop(key)
     server.shutdown()
     _log(f"[EvalServer] Server stopped (port {port})")
 
@@ -305,6 +309,19 @@ if __name__ != "__main__":
         def OnViewChange(self, context, frame, type):
             bv = _get_current_bv()
             _update_status_bar(bv)
+
+        def OnBeforeCloseFile(self, context, file, frame):
+            # Stop server for the view being closed
+            if frame:
+                bv = frame.getCurrentBinaryView()
+                if bv:
+                    key = _get_bv_key(bv)
+                    if key in _servers:
+                        server, thread, port, filename = _servers.pop(key)
+                        threading.Thread(target=server.shutdown, daemon=True).start()
+                        _log(f"[EvalServer] Server stopped (file closed, port {port})")
+            _update_status_bar(_get_current_bv())
+            return True  # Allow close to proceed
 
     _notification = EvalServerNotification()
     UIContext.registerNotification(_notification)

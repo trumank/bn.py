@@ -5,11 +5,13 @@ import argparse
 import sys
 import requests
 
-API_URL = "http://127.0.0.1:31337/eval"
+DEFAULT_PORT = 31337
+_api_port = DEFAULT_PORT
 
 def run_code(code: str) -> dict:
     """Execute code via Binary Ninja HTTP API."""
-    resp = requests.post(API_URL, json={"code": code}, timeout=30)
+    url = f"http://127.0.0.1:{_api_port}/eval"
+    resp = requests.post(url, json={"code": code}, timeout=30)
     return resp.json()
 
 def unquote(s: str) -> str:
@@ -616,6 +618,8 @@ def main():
         epilog=build_epilog(),
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
+    parser.add_argument("-P", "--port", type=int, default=DEFAULT_PORT,
+                        help=f"Server port (default: {DEFAULT_PORT})")
     subparsers = parser.add_subparsers(dest="command", metavar="", help=argparse.SUPPRESS)
 
     for name, alias, _, _, func, args in COMMANDS:
@@ -630,6 +634,8 @@ def main():
         parser.print_help()
         return
 
+    global _api_port
+    _api_port = args.port
     args.func(args)
 
 if __name__ == "__main__":
