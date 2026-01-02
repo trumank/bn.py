@@ -43,4 +43,4 @@ It's easy to unintentially run/create requests that will take a long time to fin
 
 Now turn Claude Code loose on moderately difficult [crackme](https://crackmes.one/crackme/695516b4c7e2397e5ac65b2f):
 
-https://github.com/user-attachments/assets/8748b4d7-f778-4cd2-97f7-2e1aa3458765
+https://github.com/user-attachments/assets/01f5b7f3-7acb-40fb-b395-ceeaefabbc2c
