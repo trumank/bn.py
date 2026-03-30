@@ -36,14 +36,15 @@ if f:
     while not cursor.after_end:
         lines.extend(str(line.contents) for line in cursor.lines)
         cursor.next()
-    result = chr(10).join(lines[:{args.lines}])
+    result = chr(10).join(lines)
 else:
     result = "Function not found"
 result
 """
     result = run_code(code)
     if result.get("success"):
-        print(unquote(result["result"]))
+        output = unquote(result["result"])
+        print(output)
     else:
         print(f"Error: {result}", file=sys.stderr)
 
@@ -58,13 +59,13 @@ def cmd_hlil(args):
 def cmd_funcs(args):
     """List functions in address range or by name pattern."""
     if args.pattern:
-        code = f'[(hex(f.start), f.name) for f in bv.functions if __import__("re").search({repr(args.pattern)}, f.name, __import__("re").IGNORECASE)][:{args.limit}]'
+        code = f'[(hex(f.start), f.name) for f in bv.functions if __import__("re").search({repr(args.pattern)}, f.name, __import__("re").IGNORECASE)]'
     elif args.start and args.end:
-        code = f'[(hex(f.start), f.name) for f in bv.functions if {args.start} <= f.start <= {args.end}][:{args.limit}]'
+        code = f'[(hex(f.start), f.name) for f in bv.functions if {args.start} <= f.start <= {args.end}]'
     elif args.named:
-        code = f'[(hex(f.start), f.name) for f in bv.functions if not f.name.startswith("sub_")][:{args.limit}]'
+        code = f'[(hex(f.start), f.name) for f in bv.functions if not f.name.startswith("sub_")]'
     else:
-        code = f'[(hex(f.start), f.name) for f in bv.functions][:{args.limit}]'
+        code = f'[(hex(f.start), f.name) for f in bv.functions]'
 
     result = run_code(code)
     if result.get("success"):
@@ -99,7 +100,7 @@ for x in refs:
         funcs = bv.get_functions_containing(x)
         name = funcs[0].name if funcs else "data"
     func_counts[name] = func_counts.get(name, 0) + 1
-sorted(func_counts.items(), key=lambda x: -x[1])[:{args.limit}]
+sorted(func_counts.items(), key=lambda x: -x[1])
 '''
         result = run_code(code)
         if result.get("success") and result["result"]:
@@ -123,7 +124,7 @@ for x in bv.get_data_refs({addr}):
     funcs = bv.get_functions_containing(x)
     name = funcs[0].name if funcs else "data"
     results.append((hex(x), name))
-results[:{args.limit}]
+results
 '''
         result = run_code(code)
         if result.get("success") and result["result"]:
@@ -170,9 +171,9 @@ result
 def cmd_strings(args):
     """Search for strings."""
     if args.pattern:
-        code = f'[(hex(s.start), s.value) for s in bv.strings if "{args.pattern}" in s.value][:{args.limit}]'
+        code = f'[(hex(s.start), s.value) for s in bv.strings if "{args.pattern}" in s.value]'
     else:
-        code = f'[(hex(s.start), s.value) for s in bv.strings if len(s.value) > 4][:{args.limit}]'
+        code = f'[(hex(s.start), s.value) for s in bv.strings if len(s.value) > 4]'
 
     result = run_code(code)
     if result.get("success"):
@@ -193,21 +194,21 @@ lvo = LinearViewObject.disassembly(bv, settings)
 cursor = lvo.cursor
 cursor.seek_to_address({addr})
 lines = []
-count = 0
-while not cursor.after_end and count < {args.lines}:
+while not cursor.after_end:
     for line in cursor.lines:
         if line.contents.address >= {addr} + {args.length}:
             break
         lines.append(str(line.contents))
-        count += 1
-    if count >= {args.lines}:
-        break
-    cursor.next()
+    else:
+        cursor.next()
+        continue
+    break
 chr(10).join(lines)
 """
     result = run_code(code)
     if result.get("success"):
-        print(unquote(result["result"]))
+        output = unquote(result["result"])
+        print(output)
     else:
         print(f"Error: {result}", file=sys.stderr)
 
@@ -329,7 +330,7 @@ for addr in range({start}, {end}, 8):
     var = bv.get_data_var_at(addr)
     if var and hasattr(var, "name") and var.name:
         vars.append((hex(var.address), str(var.type)[:30], var.name))
-vars[:{args.limit}]
+vars
 '''
         result = run_code(code)
         if result.get("success") and result["result"]:
@@ -435,7 +436,7 @@ def cmd_deref(args):
     addr = resolve_addr(args.address)
     code = f'''
 results = []
-for i in range({args.depth}):
+for i in range({args.count}):
     a = {addr} + i*8
     val = bv.read(a, 8)
     if len(val) == 8:
@@ -521,22 +522,18 @@ COMMANDS = [
     # (name, alias, usage, help, func, [(arg_flags, arg_opts), ...])
     ("disasm", "d", "<addr>", "Disassemble function", cmd_disasm, [
         (["address"], {"help": "Function address or symbol"}),
-        (["-n", "--lines"], {"type": int, "default": 100, "help": "Max lines"}),
     ]),
     ("hlil", "h", "<addr>", "High-level IL", cmd_hlil, [
         (["address"], {"help": "Function address or symbol"}),
-        (["-n", "--lines"], {"type": int, "default": 100, "help": "Max lines"}),
     ]),
     ("mlil", "m", "<addr>", "Medium-level IL", cmd_mlil, [
         (["address"], {"help": "Function address or symbol"}),
-        (["-n", "--lines"], {"type": int, "default": 100, "help": "Max lines"}),
     ]),
     ("funcs", "f", "[-p PAT] [--named]", "List/search functions", cmd_funcs, [
         (["-p", "--pattern"], {"help": "Regex pattern (case-insensitive)"}),
         (["-s", "--start"], {"type": parse_addr, "help": "Start address"}),
         (["-e", "--end"], {"type": parse_addr, "help": "End address"}),
         (["--named"], {"action": "store_true", "help": "Only named functions"}),
-        (["-n", "--limit"], {"type": int, "default": 50, "help": "Max results"}),
     ]),
     ("rename", "r", "<addr> <name>", "Rename function", cmd_rename, [
         (["address"], {"help": "Function address or symbol"}),
@@ -545,7 +542,6 @@ COMMANDS = [
     ("xrefs", "x", "<addr> [-c]", "Cross-references to address", cmd_xrefs, [
         (["address"], {"help": "Target address or symbol"}),
         (["-c", "--count"], {"action": "store_true", "help": "Group and count by function"}),
-        (["-n", "--limit"], {"type": int, "default": 50, "help": "Max results"}),
     ]),
     ("callers", "cr", "<addr>", "Functions that call target", cmd_callers, [
         (["address"], {"help": "Function address or symbol"}),
@@ -555,12 +551,10 @@ COMMANDS = [
     ]),
     ("strings", "s", "[-p PAT]", "Search strings", cmd_strings, [
         (["-p", "--pattern"], {"help": "Pattern to search"}),
-        (["-n", "--limit"], {"type": int, "default": 30, "help": "Max results"}),
     ]),
     ("read", None, "<addr>", "Linear view at address", cmd_read, [
         (["address"], {"help": "Address or symbol"}),
         (["-l", "--length"], {"type": int, "default": 256, "help": "Byte range"}),
-        (["-n", "--lines"], {"type": int, "default": 50, "help": "Max lines"}),
     ]),
     ("hexdump", "hd", "<addr>", "Raw hex dump", cmd_hexdump, [
         (["address"], {"help": "Address or symbol"}),
@@ -575,7 +569,6 @@ COMMANDS = [
         (["address"], {"nargs": "?", "help": "Variable address or symbol"}),
         (["-s", "--start"], {"type": parse_addr, "help": "Start address"}),
         (["-e", "--end"], {"type": parse_addr, "help": "End address"}),
-        (["-n", "--limit"], {"type": int, "default": 50, "help": "Max results"}),
     ]),
     ("sig", None, "<addr> [SIG]", "Show/set function signature", cmd_sig, [
         (["address"], {"help": "Function address or symbol"}),
@@ -587,7 +580,7 @@ COMMANDS = [
     ]),
     ("deref", "dr", "<addr>", "Dereference pointer chain", cmd_deref, [
         (["address"], {"help": "Start address or symbol"}),
-        (["-d", "--depth"], {"type": int, "default": 8, "help": "Number of pointers"}),
+        (["-n", "--count"], {"type": int, "default": 8, "help": "Number of entries"}),
     ]),
     ("comment", "cmt", "<addr> <text>", "Set comment", cmd_comment, [
         (["address"], {"help": "Address or symbol"}),
