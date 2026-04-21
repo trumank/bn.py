@@ -5,6 +5,7 @@ Can be used as:
   1. Binary Ninja plugin: Copy to plugins folder, use Plugins menu
   2. Headless server: python binja_eval_server.py <binary> [--port PORT]
 """
+import io
 import sys
 import json
 import threading
@@ -78,13 +79,20 @@ def make_handler(bv):
                 code = body
 
             import binaryninja
-            exec_globals = {"bv": bv, "binaryninja": binaryninja}
+            stdout_buf = io.StringIO()
+            exec_globals = {
+                "bv": bv,
+                "binaryninja": binaryninja,
+                "print": lambda *args, **kwargs: print(*args, **{**kwargs, "file": stdout_buf}),
+            }
 
             try:
                 result = _eval_code(code, exec_globals)
-                response = {"success": True, "result": repr(result)}
+                output = stdout_buf.getvalue() + repr(result)
+                response = {"success": True, "result": output}
             except Exception as e:
-                response = {"success": False, "error": str(e)}
+                output = stdout_buf.getvalue() + str(e)
+                response = {"success": False, "error": output}
 
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
